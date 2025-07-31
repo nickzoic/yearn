@@ -5,10 +5,9 @@ import random
 # https://wiki.minetest.org/Games/Minetest_Game/Nodes
 
 block_map = {
-#        "default:water_source": 0,
-#        "default:river_water_source": 1,
-        "default:sand": 1,
-        "default:gravel": 2,
+        "default:water_source": 0,
+        "default:river_water_source": 1,
+        "default:sand": 2,
         "default:dirt": 3,
         "default:dry_dirt": 4,
         "default:stone": 5,
@@ -87,7 +86,6 @@ def write_block(x, y, z, block):
     pos = x * 4096 * 4096 + y + z * 4096
     data = bytes(block_to_binary(block))
     db.execute("insert or replace into blocks (pos, data) values (?, ?)", (pos, data))
-    db.commit()
 
 with open('WORLD.MAP', 'rb') as fh:
     world = fh.read(65536)
@@ -101,9 +99,10 @@ for x1 in range(0,8):
                 x = x1*32+x2
                 y = y1*32+y2
                 n = world[y1*8192+x1*1024+y2*32+x2]
-                print("%d %d %d" % (x, y, n))
+                print("%d %d %d %d => %d %d => %d" % (x1, y1, x2, y2, x, y, n))
                 if n in valid_blocks:
                     write_block(x, y, 0, bytes([n]) * 4096)
+        db.commit()
 
 db.close()
 

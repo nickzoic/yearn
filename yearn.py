@@ -28,11 +28,11 @@ from collections import defaultdict
 CHUNK = 16
 CHUNK3 = CHUNK * CHUNK * CHUNK
 
-World = defaultdict(lambda: bytes(CHUNK3))
+World = defaultdict(lambda: bytearray(CHUNK3))
 
 def set_block(x, y, z, b):
     chunk = World[(x//CHUNK,y//CHUNK,z//CHUNK)]
-    chunk[(z%CHUNK)*CHUNK*CHUNK + (y%CHUNK)*CHUNK + (z%chunk)] = b
+    chunk[(z%CHUNK)*CHUNK*CHUNK + (y%CHUNK)*CHUNK + (x%CHUNK)] = b
 
 # Minetest uses "itemstrings" to describe its various blocks, we don't 
 # want to store these so we keep a table translating them to byte values.
@@ -49,48 +49,66 @@ block_map = {
         "default:dirt": 3,
 }
 
-# The main Ultima IV map mostly uses the first 16 or so tiles although
-# there are a few others:
+# Add new block types as they get seen.
 
-# 00 deep ocean
-# 01 shallow ocean / deep river
-# 02 shallow river
-# 03 swamp
-# 04 grass
-# 05 light forest
-# 06 heavy forest
-# 07 hills
-# 08 mountains
+def get_block_byte(itemstring):
+    return block_map.setdefault(itemstring, len(block_map))
 
-#and there's structures
+# This maps the Ultima IV tile types to little stacks of Minetest
+# blocks.
 
-# 09 dungeon
-# 0A town
-# 0B castle
-# 0c villiage
-# 0d britain (west)
-# 0e britain (center)
-# 0f britain (east)
-# 17 bridge
-# 1d ruin
-# 1e shrine
-# 3d ankh
-# 46 lava?
-# 4c lava?
+blocks_for_tile = {
+        0: [ 'default:sand', 'default:water_source', 'default:water_source' ],
+        1: [ 'default:sand', 'default:sand', 'default:water_source' ],
+        2: [ 'default:sand', 'default:sand', 'default:sand_with_kelp' ],
+        3: [ 'default:stone', 'default:dirt', 'default:dirt', 'default:junglegrass' ],
+        4: [ 'default:stone', 'default:dirt', 'default:dirt_with_grass' ],
+        5: [ 'default:stone', 'default:dirt', 'default:dirt_with_rainforest_litter' ],
+        6: [ 'default:stone', 'default:dirt', 'default:dirt', 'default:dirt_with_coniferous_litter' ],
+        7: [ 'default:stone', 'default:stone', 'default:stone', 'default:cobble' ],
+        8: [ 'default:stone', 'default:stome', 'default:stone', 'default:stone', 'default:stone', 'default:snow' ],
+        0x17: [ 'default:sand', 'default:water_source', 'default:water_source', 'air', 'default:stone' ],
+        0x4C: [ 'default:lava' ] * 6
+}
 
-#        "default:water_source": 0,
-#        "default:river_water_source": 1,
-#        "default:sand": 2,
-#        "default:dirt": 3,
-#        "default:dry_dirt": 4,
-#        "default:stone": 5,
-#        "default:stone_with_iron": 6,
-#        "default:stone_with_coal": 7,
-#        "default:lava": 8,
+# The idea here is to integrate towns into the map so
+# there's just a single map.  Towns have a 32x32 map size
+# so the obvious thing would be to make each "world" 
+# tile into a 32x32 area but that just seems a little
+# too big a scale, so instead I think I'll make it 16 
+# and the towns will just have to hang over into
+# neighbouring tiles.
+
+# mini world for now
+SCALE = 5
+
+with open("dat/WORLD.MAP", "rb") as fh:
+    ultima_world = fh.read(256*256)
+
+# the Ultima map is broken up into 8x8 chunks
+# each of which is 32x32 tiles.
+
+for tx in range(0, 256):
+    print(tx)
+    for ty in range(0, 256):
+        tile = ultima_world[
+            (ty // 32) * 8192 +
+            (tx // 32) * 1024 +
+            (ty % 32) * 32 +
+            (tx % 32)
+        ]
+        blocks = blocks_for_tile.get(tile)
+        if not blocks: continue
+        for ox in range(SCALE):
+            for oy in range(SCALE):
+                for (oz, block) in enumerate(blocks):
+                    bb = get_block_byte(block)
+                    set_block(tx*SCALE+ox, oz, ty*SCALE+oy, bb)
+
+for k, v in block_map.items():
+    print(k,v)
 
 valid_blocks = set(block_map.values())
-
-print(valid_blocks)
 
 def u16(n):
     yield n >> 8 & 0xFF
@@ -107,7 +125,6 @@ def u32(n):
 
 def block_to_data(block):
     # block is a binary array of node IDs in ZYX order.
-    assert type(block) is bytes
     assert len(block) == 4096
 
     # headers
@@ -151,31 +168,18 @@ def block_to_binary(block):
     yield 29
     yield from zstd.compress(bytes(block_to_data(block)))
 
-
 db = sqlite3.connect('/home/nick/.minetest/worlds/x/map.sqlite')
 
 def write_block(x, y, z, block):
-    pos = x * 4096 * 4096 + y + z * 4096
+    pos = z * 4096 * 4096 + y * 4096 + x
     data = bytes(block_to_binary(block))
     db.execute("insert or replace into blocks (pos, data) values (?, ?)", (pos, data))
 
-with open('WORLD.MAP', 'rb') as fh:
-    world = fh.read(65536)
+for (x, y, z), bb in World.items():
+    print(x,y,z)
+    write_block(x, y, z, bb)
 
-#print(world)
-
-for x1 in range(0,8):
-    for y1 in range(0,8):
-        for x2 in range(0,32):
-            for y2 in range(0,32):
-                x = x1*32+x2
-                y = y1*32+y2
-                n = world[y1*8192+x1*1024+y2*32+x2]
-                print("%d %d %d %d => %d %d => %d" % (x1, y1, x2, y2, x, y, n))
-                if n in valid_blocks:
-                    write_block(x, y, 0, bytes([n]) * 4096)
-        db.commit()
-
+db.commit()
 db.close()
 
 
