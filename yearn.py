@@ -55,6 +55,8 @@ def get_block_byte(itemstring):
 
 # Load the Ultima IV world map into memory.  It's only 256x256 bytes!
 
+print("Loading World")
+
 with open("dat/WORLD.MAP", "rb") as fh:
     ultima_world = fh.read(256*256)
 
@@ -80,6 +82,8 @@ blocks_for_tile = {
         0x1c: lambda: [ 'default:ladder_wood' ] * 2,
         0x3a: lambda: [ 'default:brick', 'air', 'air', 'air', 'default:brick', 'default:brick' ],
         0x3b: lambda: [ 'default:brick', 'air', 'air', 'air', 'default:brick', 'default:brick' ],
+        0x37: lambda: [ 'default:stone', 'default:slab_cobble' ],
+        0x39: lambda: [ 'default:stone', 'default:cobble' ],
 
         0x3D: lambda: [ 'default:diamondblock' ] * 10,
         0x3E: lambda: [ 'default:brick' ],
@@ -100,8 +104,8 @@ default_blocks_for_tile = lambda: [ 'default:goldblock' ] * 4
 # smaller and the towns will just have to hang over into
 # neighbouring tiles.
 
-# XXX maybe even 12 is more like it, towns would then 
-# overlap most of the tiles around them but that's okay.
+# With scale=12, towns overlap most of the tiles around them,
+# but it looks about right. 
 
 SCALE = 12
 
@@ -111,8 +115,18 @@ SCALE = 12
 # Y axis runs North -> South, which is the opposite direction
 # to the minetest Z axis.
 
+print("Processing World (scale %d) ..." % SCALE)
+
+unknown_tiles = defaultdict(int)
+
+progress = 0
+
 for ty in range(0, 256):
-    print(ty)
+    percent = 100 * ty // 256
+    if percent > progress + 4:
+        print("... %d%%" % percent)
+        progress = percent
+    
     for tx in range(0, 256):
         tile = ultima_world[
             (ty // 32) * 8192 +
@@ -122,7 +136,7 @@ for ty in range(0, 256):
         ]
         block_generator = blocks_for_tile.get(tile)
         if not block_generator:
-            print("Unknown tile %02x at world (%d, %d)" % (tile, tx, ty))
+            unknown_tiles[tile] += 1
             block_generator = default_blocks_for_tile
 
         for ox in range(SCALE):
@@ -144,16 +158,18 @@ def read_town(map_name, x, y, z=4):
                 tile = ultima_town[ty*32+tx]
                 block_generator = blocks_for_tile.get(tile)
                 if not block_generator:
-                    print("Unknown tile %02x at town %s (%d, %d)" % (tile, map_name, tx, ty))
+                    unknown_tiles[tile] += 1
                     continue
                 for (oz, block) in enumerate(block_generator()):
                     bb = get_block_byte(block)
                     set_block(xo + tx, z + oz, yo - ty, bb)
-    print("Added town %s at (%s, %s)" % (map_name, x * SCALE, (255-y) * SCALE))
+    print("... %s at (%d, %d)" % (map_name, x * SCALE, (255-y) * SCALE))
 
 # locations based on ...
 # https://tartarus.rpgclassics.com/ultima4/worldmap.php
 # ... but some of these were off by a couple in whatever direction
+
+print("Adding Towns ...")
 
 read_town('LCB_1', 86, 107)
 read_town('LCB_2', 86, 107, 10)
@@ -195,10 +211,18 @@ read_town('SERPENT', 146, 241)
 # HUMILITY 231, 215
 # AVATAR 231, 235
 
-for k, v in block_map.items():
-    print(k,v)
+print("Materials Used:")
 
-valid_blocks = set(block_map.values())
+for k, v in block_map.items():
+    print("  %d %s" % (v, k))
+
+print("Unknown Tiles Found:")
+
+for k, v in sorted(unknown_tiles.items()):
+    print("  %02x %d" % (k, v))
+
+# ============================================================
+# LUANTI / MINETEST FILE FORMAT STUFF
 
 def u16(n):
     yield n >> 8 & 0xFF
@@ -235,8 +259,8 @@ def block_to_data(block):
         yield from u16(v)
         yield from u16(len(k))
         yield from bytes(k, 'ascii')
-    yield 2 # content_width
-    yield 2 # params_width
+    yield 2 # content_width (always 2)
+    yield 2 # params_width  (always 2)
 
     for b in block:
         yield from u16(b) # param0
@@ -249,12 +273,12 @@ def block_to_data(block):
 
     yield from u32(0)
 
-    yield 10
+    yield 10             # timer record size (always 10)
     yield from u16(0)  # no timers
 
 
 def block_to_binary(block):
-    yield 29
+    yield 29              # chunk version number
     yield from zstd.compress(bytes(block_to_data(block)))
 
 db = sqlite3.connect('/home/nick/.minetest/worlds/x/map.sqlite')
@@ -264,9 +288,15 @@ def write_block(x, y, z, block):
     data = bytes(block_to_binary(block))
     db.execute("insert or replace into blocks (pos, data) values (?, ?)", (pos, data))
 
-print("Writing blocks ...")
-for (x, y, z), bb in World.items():
+print("Writing %d blocks ..." % len(World))
+progress = 0
+for n, ((x, y, z), bb) in enumerate(World.items()):
+    percent = 100 * n // len(World)
     write_block(x, y, z, bb)
+    if percent > progress + 4:
+        db.commit()
+        print("... %d%%" % percent)
+        progress = percent
 print("Done.")
 
 db.commit()
