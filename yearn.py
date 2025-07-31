@@ -73,12 +73,19 @@ blocks_for_tile = {
         6: lambda: [ 'default:stone', 'default:dirt', 'default:gravel', 'default:dirt', 'default:dirt' ] + random.choices((['default:dirt'], ['default:dirt_with_coniferous_litter'], ['default:dirt', 'default:pine_sapling'], ['default:dirt', 'default:aspen_sapling']), (9,5,1,1))[0],
         7: lambda: [ 'default:stone' ] * random.randint(4,5),
         8: lambda: [ 'default:stone' ] * random.randint(8,12) + [ 'default:snow' ],
-        0x16: lambda: [ 'default:stone' ] * 3 + [ 'default:cobble' ],
+        0x16: lambda: [ 'default:cobble' ],
         0x17: lambda: [ 'default:stone', 'default:gravel', 'default:water_source', 'air', 'default:stone' ],
-        0x3E: lambda: [ 'default:brick' ] * 4,
+        0x1b: lambda: [ 'default:brick' ] + [ 'default:ladder_wood'] * 4,
+        0x1c: lambda: [ 'default:ladder_wood' ] * 2,
+        0x1e: lambda: [ 'default:goldblock' ] * 10,
+        0x3D: lambda: [ 'default:diamondblock' ] * 10,
+        0x3E: lambda: [ 'default:brick' ],
+        0x46: lambda: [ 'default:obsidian_block'] * 6,
         0x4C: lambda: [ 'default:lava' ] * random.randint(8,10),
-        0x7F: lambda: [ 'default:brick' ] * 8,
+        0x7F: lambda: [ 'default:brick' ] * 6,
 }
+
+default_blocks_for_tile = lambda: [ 'default:stone' ] * 4
 
 # The idea here is to integrate towns into the map so
 # there's just a single map.  Towns have a 32x32 map size
@@ -91,10 +98,13 @@ blocks_for_tile = {
 # XXX maybe even 12 is more like it, towns would then 
 # overlap most of the tiles around them but that's okay.
 
-SCALE = 5
+SCALE = 20
 
 # the Ultima map is broken up into 8x8 chunks
 # each of which is 32x32 tiles.
+# X axis runs West -> East
+# Y axis runs North -> South, which is the opposite direction
+# to the minetest Z axis.
 
 for ty in range(0, 256):
     print(ty)
@@ -108,15 +118,18 @@ for ty in range(0, 256):
         block_generator = blocks_for_tile.get(tile)
         if not block_generator:
             print("Unknown tile %02x at world (%d, %d)" % (tile, tx, ty))
-            continue
+            block_generator = default_blocks_for_tile
 
         for ox in range(SCALE):
             for oy in range(SCALE):
                 for (oz, block) in enumerate(block_generator()):
                     bb = get_block_byte(block)
-                    set_block(tx*SCALE+ox, oz, ty*SCALE+oy, bb)
+                    set_block(tx*SCALE+ox, oz, (256*SCALE)-(ty*SCALE+oy), bb)
 
-def read_town(map_name, x, y, z=0):
+
+def read_town(map_name, x, y, z=4):
+    xo = x * SCALE + SCALE//2 - 16
+    yo = (255-y) * SCALE - SCALE//2 + 16
     with open(f"dat/{map_name}.ULT", "rb") as fh:
         ultima_town = fh.read(32*32)
         for tx in range(0,32):
@@ -128,12 +141,13 @@ def read_town(map_name, x, y, z=0):
                     continue
                 for (oz, block) in enumerate(block_generator()):
                     bb = get_block_byte(block)
-                    set_block(int((x+0.5)*SCALE)+tx, z + oz, int((y+0.5)*SCALE)+ty, bb)
+                    set_block(xo + tx, z + oz, yo - ty, bb)
+    print("Added town %s at (%s, %s)" % (map_name, x * SCALE, (255-y) * SCALE))
 
 
-read_town('LCB_1', 107, 86)
-read_town('LCB_2', 107, 86, 10)
-read_town('BRITAIN', 50, 50)
+read_town('LCB_1', 86, 107)
+read_town('LCB_2', 86, 107, 10)
+read_town('BRITAIN', 82, 106)
 
 for k, v in block_map.items():
     print(k,v)
