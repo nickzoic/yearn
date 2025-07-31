@@ -43,14 +43,12 @@ def set_block(x, y, z, b):
 # for full representation of villages etc we might need
 # to make some custom "letter blocks", etc.
 
+# Add new block types as they get seen.  The world chunk bytearrays 
+# are initialized to all zeros, so we start with 0 mapped to "air".
+
 block_map = {
         "air": 0,
-        "default:stone": 1,
-        "default:sand": 2,
-        "default:dirt": 3,
 }
-
-# Add new block types as they get seen.
 
 def get_block_byte(itemstring):
     return block_map.setdefault(itemstring, len(block_map))
@@ -62,6 +60,9 @@ with open("dat/WORLD.MAP", "rb") as fh:
 
 # This maps the Ultima IV tile types to little stacks of Minetest
 # blocks.
+
+# XXX might have to be different for world and towns but worry about
+# that later.
 
 blocks_for_tile = {
         0: lambda: [ 'default:sand', 'default:water_source', 'default:water_source' ],
@@ -77,28 +78,32 @@ blocks_for_tile = {
         0x17: lambda: [ 'default:stone', 'default:gravel', 'default:water_source', 'air', 'default:stone' ],
         0x1b: lambda: [ 'default:brick' ] + [ 'default:ladder_wood'] * 4,
         0x1c: lambda: [ 'default:ladder_wood' ] * 2,
-        0x1e: lambda: [ 'default:goldblock' ] * 10,
+        0x3a: lambda: [ 'default:brick', 'air', 'air', 'air', 'default:brick', 'default:brick' ],
+        0x3b: lambda: [ 'default:brick', 'air', 'air', 'air', 'default:brick', 'default:brick' ],
+
         0x3D: lambda: [ 'default:diamondblock' ] * 10,
         0x3E: lambda: [ 'default:brick' ],
         0x46: lambda: [ 'default:obsidian_block'] * 6,
         0x4C: lambda: [ 'default:lava' ] * random.randint(8,10),
+        0x6c: lambda: [ 'default:glass' ] * 6,
+        0x6d: lambda: [ 'default:glass' ] * 6,
         0x7F: lambda: [ 'default:brick' ] * 6,
 }
 
-default_blocks_for_tile = lambda: [ 'default:stone' ] * 4
+default_blocks_for_tile = lambda: [ 'default:goldblock' ] * 4
 
 # The idea here is to integrate towns into the map so
 # there's just a single map.  Towns have a 32x32 map size
 # so the obvious thing would be to make each "world" 
 # tile into a 32x32 area but that just seems a little
-# too big a scale, so instead I think I'll make it 16 
-# and the towns will just have to hang over into
+# too big a scale, so instead I think I'll make it 
+# smaller and the towns will just have to hang over into
 # neighbouring tiles.
 
 # XXX maybe even 12 is more like it, towns would then 
 # overlap most of the tiles around them but that's okay.
 
-SCALE = 20
+SCALE = 12
 
 # the Ultima map is broken up into 8x8 chunks
 # each of which is 32x32 tiles.
@@ -127,9 +132,11 @@ for ty in range(0, 256):
                     set_block(tx*SCALE+ox, oz, (256*SCALE)-(ty*SCALE+oy), bb)
 
 
+# towns are a single 32x32 chunk of tiles
+
 def read_town(map_name, x, y, z=4):
     xo = x * SCALE + SCALE//2 - 16
-    yo = (255-y) * SCALE - SCALE//2 + 16
+    yo = (255-y) * SCALE + SCALE//2 + 16
     with open(f"dat/{map_name}.ULT", "rb") as fh:
         ultima_town = fh.read(32*32)
         for tx in range(0,32):
@@ -144,10 +151,49 @@ def read_town(map_name, x, y, z=4):
                     set_block(xo + tx, z + oz, yo - ty, bb)
     print("Added town %s at (%s, %s)" % (map_name, x * SCALE, (255-y) * SCALE))
 
+# locations based on ...
+# https://tartarus.rpgclassics.com/ultima4/worldmap.php
+# ... but some of these were off by a couple in whatever direction
 
 read_town('LCB_1', 86, 107)
 read_town('LCB_2', 86, 107, 10)
 read_town('BRITAIN', 82, 106)
+read_town('MOONGLOW', 232, 135)
+read_town('JHELOM', 36, 222)
+read_town('YEW', 58, 43)
+read_town('MINOC', 159, 20)
+read_town('TRINSIC', 106, 184)
+read_town('SKARA', 22, 128)
+read_town('MAGINCIA', 187, 169)
+read_town('DEN', 136, 158)
+read_town('COVE', 136, 90)
+read_town('PAWS', 98, 145)
+read_town('VESPER', 201, 59)
+read_town('LYCAEUM', 218, 107)
+read_town('EMPATH', 28, 50)
+read_town('SERPENT', 146, 241)
+
+# XXX need something for dungeons
+#
+# WRONG 126, 20
+# COVETOUS 156, 27
+# DESPISE 91, 67
+# DECEIT 240, 73
+# SHAME 58, 102
+# DESTARD 72, 168
+# HYTHLOTH 239, 240
+
+# XXX need something for shrines
+#
+# HONESTY 233, 66
+# COMPASSION 128,92
+# VALOR 38, 227
+# JUSTICE 73, 11
+# SACRIFICE 205, 45
+# HONOR 81, 207
+# SPIRITUALITY 166, 19 ?
+# HUMILITY 231, 215
+# AVATAR 231, 235
 
 for k, v in block_map.items():
     print(k,v)
@@ -208,7 +254,6 @@ def block_to_data(block):
 
 
 def block_to_binary(block):
-
     yield 29
     yield from zstd.compress(bytes(block_to_data(block)))
 
@@ -219,9 +264,10 @@ def write_block(x, y, z, block):
     data = bytes(block_to_binary(block))
     db.execute("insert or replace into blocks (pos, data) values (?, ?)", (pos, data))
 
+print("Writing blocks ...")
 for (x, y, z), bb in World.items():
-    print(x,y,z)
     write_block(x, y, z, bb)
+print("Done.")
 
 db.commit()
 db.close()
