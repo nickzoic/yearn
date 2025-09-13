@@ -3,6 +3,10 @@ import zstd
 import random
 from collections import defaultdict
 import random
+from statistics import median
+from functools import lru_cache
+
+median = lru_cache(median)
 
 # The read format (Ultima IV) and write format (minetest) are so different that
 # the easiest way to convert between them is an intermediate format. We could
@@ -60,6 +64,43 @@ print("Loading World")
 with open("dat/WORLD.MAP", "rb") as fh:
     ultima_world = fh.read(256*256)
 
+SCALE = 12
+
+WIDTH = 256 * SCALE
+
+# XXX doing this in two stages is a bit silly, 
+# could just do it in a single pass.
+
+print(f"Scaling by {SCALE}")
+
+scaled_world = bytearray(256*SCALE*256*SCALE)
+
+for x in range(WIDTH):
+    for y in range(WIDTH):
+        xx = x // SCALE
+        yy = y // SCALE
+        scaled_world[y * WIDTH + x] = ultima_world[(yy//32)*8192+(xx//32)*1024+(yy%32)*32+(xx%32)]
+
+SPAN = SCALE // 2 + 1
+#SPAN = 2
+
+print(f"Smoothing by {SPAN}")
+
+smoothed_world = scaled_world.copy()
+
+progress = 0
+for y in range(SPAN, WIDTH-SPAN-1):
+    percent = 100 * y // WIDTH
+    if percent > progress + 4:
+        print("... %d%%" % percent)
+        progress = percent
+    for x in range(SPAN, WIDTH-SPAN-1):
+        smoothed_world[y*WIDTH+x] = median(tuple(
+            scaled_world[yy*WIDTH+xx]
+            for yy in range(y-SPAN, y+SPAN+1)
+            for xx in range(x-SPAN, x+SPAN+1)
+        ))
+
 # This maps the Ultima IV tile types to little stacks of Minetest
 # blocks.
 
@@ -107,43 +148,34 @@ default_blocks_for_tile = lambda: [ 'default:goldblock' ] * 4
 # With scale=12, towns overlap most of the tiles around them,
 # but it looks about right. 
 
-SCALE = 12
-
 # the Ultima map is broken up into 8x8 chunks
 # each of which is 32x32 tiles.
 # X axis runs West -> East
 # Y axis runs North -> South, which is the opposite direction
 # to the minetest Z axis.
 
-print("Processing World (scale %d) ..." % SCALE)
+print("Generating blocks")
 
 unknown_tiles = defaultdict(int)
 
 progress = 0
 
-for ty in range(0, 256):
-    percent = 100 * ty // 256
+for y in range(WIDTH):
+    percent = 100 * y // WIDTH
     if percent > progress + 4:
         print("... %d%%" % percent)
         progress = percent
     
-    for tx in range(0, 256):
-        tile = ultima_world[
-            (ty // 32) * 8192 +
-            (tx // 32) * 1024 +
-            (ty % 32) * 32 +
-            (tx % 32)
-        ]
+    for x in range(WIDTH):
+        tile = smoothed_world[y*WIDTH+x]
         block_generator = blocks_for_tile.get(tile)
         if not block_generator:
             unknown_tiles[tile] += 1
             block_generator = default_blocks_for_tile
 
-        for ox in range(SCALE):
-            for oy in range(SCALE):
-                for (oz, block) in enumerate(block_generator()):
-                    bb = get_block_byte(block)
-                    set_block(tx*SCALE+ox, oz, (256*SCALE)-(ty*SCALE+oy), bb)
+        for (z, block) in enumerate(block_generator()):
+            bb = get_block_byte(block)
+            set_block(x, z, WIDTH-y, bb)
 
 
 # towns are a single 32x32 chunk of tiles
